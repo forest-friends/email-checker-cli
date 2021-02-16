@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/smtp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang/groupcache/lru"
@@ -26,10 +27,12 @@ func SplitEmail(email string) (account, host string) {
 	return email[:i], email[i+1:]
 }
 
-func СheckMX(host string, hostCache *lru.Cache) ([]*net.MX, error) {
+func СheckMX(host string, hostCache *lru.Cache, mt *sync.Mutex) ([]*net.MX, error) {
 	var err error
 	var mxList []*net.MX
+	mt.Lock()
 	mxs, ok := hostCache.Get(host)
+	mt.Unlock()
 	if !ok {
 		mxList, err = net.LookupMX(host)
 		if err != nil {

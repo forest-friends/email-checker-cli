@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/golang/groupcache/lru"
@@ -16,7 +17,11 @@ const (
 )
 
 var (
-	DefaultDialer = net.Dialer{Timeout: CONNECTION_TIMEOUT}
+	DefaultDialer    = net.Dialer{Timeout: CONNECTION_TIMEOUT}
+	successFileMutex sync.Mutex
+	badFileMutex     sync.Mutex
+	emailMutex       sync.Mutex
+	mxMutex          sync.Mutex
 )
 
 func CheckSlow(ch chan string, mxCache *lru.Cache, hostCache *lru.Cache, successFile *os.File, badFile *os.File) {
@@ -25,13 +30,17 @@ func CheckSlow(ch chan string, mxCache *lru.Cache, hostCache *lru.Cache, success
 		case email := <-ch:
 			_, host := utils.SplitEmail(email)
 			if _, ok := hostCache.Get(host); ok {
+				successFileMutex.Lock()
 				successFile.WriteString(fmt.Sprintln(email))
+				successFileMutex.Unlock()
 				continue
 			}
 
-			mxs, err := utils.СheckMX(host, mxCache)
+			mxs, err := utils.СheckMX(host, mxCache, &mxMutex)
 			if err != nil {
+				badFileMutex.Lock()
 				badFile.WriteString(fmt.Sprintln(email))
+				badFileMutex.Unlock()
 				continue
 			}
 
@@ -42,16 +51,22 @@ func CheckSlow(ch chan string, mxCache *lru.Cache, hostCache *lru.Cache, success
 				}
 
 				if err = smtpConn.Hello(host); err != nil {
+					badFileMutex.Lock()
 					badFile.WriteString(fmt.Sprintln(email))
+					badFileMutex.Lock()
 					break
 				}
 
 				hostCache.Add(host, true)
+				successFileMutex.Lock()
 				successFile.WriteString(fmt.Sprintln(email))
+				successFileMutex.Unlock()
 				break
 			}
 
+			badFileMutex.Lock()
 			badFile.WriteString(fmt.Sprintln(email))
+			badFileMutex.Unlock()
 		}
 	}
 }
@@ -60,11 +75,23 @@ func CheckStrict(ch chan string, mxCache *lru.Cache, emailCache *lru.Cache, succ
 	for {
 		select {
 		case email := <-ch:
+			emailMutex.Lock()
+			_, ok := emailCache.Get(email)
+			emailMutex.Unlock()
+			if ok {
+				successFileMutex.Lock()
+				successFile.WriteString(fmt.Sprintln(email))
+				successFileMutex.Unlock()
+				continue
+			}
+
 			_, host := utils.SplitEmail(email)
 
-			mxs, err := utils.СheckMX(host, mxCache)
+			mxs, err := utils.СheckMX(host, mxCache, &mxMutex)
 			if err != nil {
+				badFileMutex.Lock()
 				badFile.WriteString(fmt.Sprintln(email))
+				badFileMutex.Unlock()
 				continue
 			}
 
@@ -75,25 +102,37 @@ func CheckStrict(ch chan string, mxCache *lru.Cache, emailCache *lru.Cache, succ
 				}
 
 				if err = smtpConn.Hello(host); err != nil {
+					badFileMutex.Lock()
 					badFile.WriteString(fmt.Sprintln(email))
+					badFileMutex.Unlock()
 					break
 				}
 
 				if err = smtpConn.Mail(email); err != nil {
+					badFileMutex.Lock()
 					badFile.WriteString(fmt.Sprintln(email))
+					badFileMutex.Unlock()
 					break
 				}
 				if err = smtpConn.Rcpt(email); err != nil {
+					badFileMutex.Lock()
 					badFile.WriteString(fmt.Sprintln(email))
+					badFileMutex.Unlock()
 					break
 				}
 
+				emailMutex.Lock()
 				emailCache.Add(email, true)
+				emailMutex.Unlock()
+				successFileMutex.Lock()
 				successFile.WriteString(fmt.Sprintln(email))
+				successFileMutex.Unlock()
 				break
 			}
 
+			badFileMutex.Lock()
 			badFile.WriteString(fmt.Sprintln(email))
+			badFileMutex.Unlock()
 		}
 	}
 }
