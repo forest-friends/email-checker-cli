@@ -19,12 +19,12 @@ const (
 var (
 	DefaultDialer    = net.Dialer{Timeout: CONNECTION_TIMEOUT}
 	successFileMutex sync.Mutex
-	badFileMutex     sync.Mutex
-	emailMutex       sync.Mutex
-	mxMutex          sync.Mutex
+
+	emailMutex sync.Mutex
+	mxMutex    sync.Mutex
 )
 
-func CheckSlow(ch chan string, mxCache *lru.Cache, hostCache *lru.Cache, successFile *os.File, badFile *os.File) {
+func CheckSlow(ch chan string, mxCache *lru.Cache, hostCache *lru.Cache, successFile *os.File, badFile *os.File, badFileMutex *sync.Mutex) {
 	for {
 		select {
 		case email := <-ch:
@@ -44,6 +44,7 @@ func CheckSlow(ch chan string, mxCache *lru.Cache, hostCache *lru.Cache, success
 				continue
 			}
 
+			isFinded := false
 			for _, mx := range mxs {
 				smtpConn, err := utils.MakeSMTPConnection(host, mx, 25)
 				if err != nil {
@@ -61,17 +62,20 @@ func CheckSlow(ch chan string, mxCache *lru.Cache, hostCache *lru.Cache, success
 				successFileMutex.Lock()
 				successFile.WriteString(fmt.Sprintln(email))
 				successFileMutex.Unlock()
+				isFinded = true
 				break
 			}
 
-			badFileMutex.Lock()
-			badFile.WriteString(fmt.Sprintln(email))
-			badFileMutex.Unlock()
+			if !isFinded && err == nil {
+				badFileMutex.Lock()
+				badFile.WriteString(fmt.Sprintln(email))
+				badFileMutex.Unlock()
+			}
 		}
 	}
 }
 
-func CheckStrict(ch chan string, mxCache *lru.Cache, emailCache *lru.Cache, successFile *os.File, badFile *os.File) {
+func CheckStrict(ch chan string, mxCache *lru.Cache, emailCache *lru.Cache, successFile *os.File, badFile *os.File, badFileMutex *sync.Mutex) {
 	for {
 		select {
 		case email := <-ch:
@@ -95,6 +99,7 @@ func CheckStrict(ch chan string, mxCache *lru.Cache, emailCache *lru.Cache, succ
 				continue
 			}
 
+			isFinded := false
 			for _, mx := range mxs {
 				smtpConn, err := utils.MakeSMTPConnection(host, mx, 25)
 				if err != nil {
@@ -127,12 +132,15 @@ func CheckStrict(ch chan string, mxCache *lru.Cache, emailCache *lru.Cache, succ
 				successFileMutex.Lock()
 				successFile.WriteString(fmt.Sprintln(email))
 				successFileMutex.Unlock()
+				isFinded = true
 				break
 			}
 
-			badFileMutex.Lock()
-			badFile.WriteString(fmt.Sprintln(email))
-			badFileMutex.Unlock()
+			if !isFinded && err == nil {
+				badFileMutex.Lock()
+				badFile.WriteString(fmt.Sprintln(email))
+				badFileMutex.Unlock()
+			}
 		}
 	}
 }

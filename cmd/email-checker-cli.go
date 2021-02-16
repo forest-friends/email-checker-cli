@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/golang/groupcache/lru"
@@ -53,12 +54,13 @@ func main() {
 	validator := validator.New()
 	slowChannel := make(chan string, 100)
 	strictChannel := make(chan string, 100)
+	var badMutex sync.Mutex
 
 	for i := 1; i < *slowGoroutines; i++ {
-		go services.CheckSlow(slowChannel, mxHostCache, hostCache, successFile, badFile)
+		go services.CheckSlow(slowChannel, mxHostCache, hostCache, successFile, badFile, &badMutex)
 	}
 	for i := 1; i < *strictGoroutines; i++ {
-		go services.CheckStrict(strictChannel, mxHostCache, emailCache, successFile, badFile)
+		go services.CheckStrict(strictChannel, mxHostCache, emailCache, successFile, badFile, &badMutex)
 	}
 
 	scanner := bufio.NewScanner(inputFile)
@@ -67,7 +69,9 @@ func main() {
 
 		err = validator.Var(email, "required,email")
 		if err != nil {
+			badMutex.Lock()
 			badFile.WriteString(fmt.Sprintln(email))
+			badMutex.Unlock()
 			continue
 		}
 
@@ -77,8 +81,6 @@ func main() {
 		} else {
 			slowChannel <- email
 		}
-
-		successFile.WriteString(fmt.Sprintln(email))
 	}
 
 	if err := scanner.Err(); err != nil {
